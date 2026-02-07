@@ -17,7 +17,7 @@ export default function MapWrapper({ position, points }: Props) {
   const mapRef = useRef<L.Map>(null);
   const markerRef = useRef<L.CircleMarker>(null);
   const trailRef = useRef<L.Polyline>(null);
-  const pulseRef = useRef<number>();
+  const pulseRef = useRef<number | null>(null);
 
   const updateMarker = useCallback(() => {
     if (!mapRef.current) return;
@@ -34,8 +34,7 @@ export default function MapWrapper({ position, points }: Props) {
         weight: 3,
         opacity: 1,
         fillOpacity: 0.95,
-        bubblingMouseEvents: false,
-        className: "gps-marker"
+        bubblingMouseEvents: false
       }).addTo(map);
     } else {
       markerRef.current.setLatLng(position);
@@ -63,21 +62,16 @@ export default function MapWrapper({ position, points }: Props) {
       }
     };
 
-    if (pulseRef.current) clearInterval(pulseRef.current as any);
-    pulseRef.current = setInterval(pulse, 350) as any;
+    if (pulseRef.current) clearInterval(pulseRef.current);
+    pulseRef.current = setInterval(pulse, 350) as unknown as number;
 
-    map.flyTo(position, 17, { 
-      duration: 0.6, 
-      animate: true,
-      paddingTopLeft: [20, 20],
-      paddingBottomRight: [20, 20]
-    });
+    map.flyTo(position, 17, { duration: 0.6, animate: true });
   }, [position]);
 
   useEffect(() => {
     updateMarker();
     return () => {
-      if (pulseRef.current) clearInterval(pulseRef.current as any);
+      if (pulseRef.current) clearInterval(pulseRef.current);
     };
   }, [updateMarker]);
 
@@ -88,40 +82,29 @@ export default function MapWrapper({ position, points }: Props) {
 
   if (!points.length) {
     return (
-      <div className="h-[50vh] sm:h-[60vh] md:h-[70vh] lg:h-[600px] bg-gradient-to-br from-orange-50 to-red-50 rounded-3xl shadow-2xl flex items-center justify-center border-4 border-dashed border-orange-200">
-        <div className="text-center animate-bounce px-4">
-          <div className="w-16 h-16 sm:w-20 sm:h-20 md:w-24 md:h-24 bg-gradient-to-r from-orange-400 to-red-500 rounded-2xl mx-auto mb-6 shadow-xl"></div>
-          <div className="text-xl sm:text-2xl md:text-3xl font-black bg-gradient-to-r from-orange-600 to-red-600 bg-clip-text text-transparent">
+      <div className="w-full h-[50vh] sm:h-[60vh] lg:h-[70vh] bg-gradient-to-br from-orange-50 to-red-50 rounded-3xl shadow-2xl flex items-center justify-center border-4 border-dashed border-orange-200">
+        <div className="text-center animate-bounce">
+          <div className="w-20 h-20 bg-gradient-to-r from-orange-400 to-red-500 rounded-2xl mx-auto mb-6 shadow-xl"></div>
+          <div className="text-2xl font-black bg-gradient-to-r from-orange-600 to-red-600 bg-clip-text text-transparent">
             GPS точки
           </div>
-          <div className="text-xs sm:text-sm text-gray-500 mt-2 px-2">JSON: lat, lng, time</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-white/50 bg-white/70 backdrop-blur-xl h-[50vh] sm:h-[60vh] md:h-[70vh] lg:h-[600px]">
-      <style jsx global>{`
-        .gps-marker {
-          filter: drop-shadow(0 4px 12px rgba(16, 185, 129, 0.6));
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-      `}</style>
-      
+    <div className="w-full h-[50vh] sm:h-[60vh] lg:h-[70vh] rounded-3xl overflow-hidden shadow-2xl border-4 border-white/50 bg-white/70 backdrop-blur-xl">
       <MapContainer
         center={position}
         zoom={16}
-        style={{ height: "100%", width: "100%", minHeight: "300px" }}
+        style={{ height: "100%", width: "100%" }}
         ref={mapRef}
         preferCanvas={true}
-        renderer={L.canvas()}
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        
         <Polyline
           positions={routePositions}
           pathOptions={{
@@ -129,7 +112,6 @@ export default function MapWrapper({ position, points }: Props) {
             weight: 6,
             opacity: 0.95
           }}
-          dashArray="[15, 12]"
         />
       </MapContainer>
     </div>
