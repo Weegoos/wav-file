@@ -1,9 +1,6 @@
-import WaveformViewer from "./components/WaveformViewer";
+import AudioGeoMap from "./components/AudioGeoMap";
+import sampleLocations from "./data/sample-locations.json";  // Твои точки
 
-export default function Page() {
-  return (
-    <main style={{ maxWidth: 900, margin: "0 auto", padding: 24 }}>
-      <WaveformViewer />
-    </main>
-  );
+export default function Home() {
+  return <AudioGeoMap initialPoints={sampleLocations} />;
 }
