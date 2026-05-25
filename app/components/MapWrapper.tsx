@@ -27,13 +27,11 @@ function downsamplePoints(points: GeoPoint[], sampleRate: number): [number, numb
 export default function MapWrapper({ position, points }: Props) {
   const mapRef = useRef<L.Map>(null);
   const markerRef = useRef<L.Marker>(null);
+  const lastCenterRef = useRef<[number, number]>(position);
 
   const routePositions = useMemo(() => {
-    if (points.length > 500000) {
-      return downsamplePoints(points, 50);
-    } else if (points.length > 10000) {
-      return downsamplePoints(points, 5);
-    }
+    if (points.length > 500000) return downsamplePoints(points, 200);
+    if (points.length > 10000) return downsamplePoints(points, 40);
     return points.map(p => [p.lat, p.lng] as [number, number]);
   }, [points]);
 
@@ -49,6 +47,7 @@ export default function MapWrapper({ position, points }: Props) {
           border: 2px solid #ffffff;
           border-radius: 50%;
           box-shadow: 0 0 12px rgba(99,102,241,0.6);
+          will-change: transform;
         ">
           <div style="
             position: absolute;
@@ -61,6 +60,10 @@ export default function MapWrapper({ position, points }: Props) {
           "></div>
         </div>
         <style>
+          .leaflet-marker-icon { 
+            transition: transform 0.2s linear !important; 
+            will-change: transform;
+          }
           @keyframes pointPulse {
             0% { transform: scale(1); opacity: 0.6; }
             100% { transform: scale(3.5); opacity: 0; }
@@ -82,30 +85,35 @@ export default function MapWrapper({ position, points }: Props) {
       markerRef.current.setLatLng(position);
     }
 
-    map.panTo(position, { animate: true, duration: 0.15 });
+    const latDiff = Math.abs(position[0] - lastCenterRef.current[0]);
+    const lngDiff = Math.abs(position[1] - lastCenterRef.current[1]);
+
+    if (latDiff > 0.001 || lngDiff > 0.001) {
+      map.panTo(position, { animate: true, duration: 0.4 });
+      lastCenterRef.current = position;
+    }
   }, [position, cssPulseIcon]);
 
   if (!points.length) return null;
 
   return (
-    <div className="w-full h-[550px] rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-[#0C101A]">
+    <div className="w-full h-[45vh] sm:h-[550px] rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-[#0C101A]">
       <MapContainer
         center={position}
         zoom={14}
         style={{ height: "100%", width: "100%" }}
         ref={mapRef}
-        preferCanvas={true}
+        preferCanvas={false}
+        zoomControl={false}
+        attributionControl={false}
       >
-        <TileLayer 
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" 
-          attribution='&copy; <a href="https://carto.com/">CARTO</a>'
-        />
+        <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
         <Polyline
           positions={routePositions}
           pathOptions={{
             color: "#6366f1",
             weight: 3.5,
-            opacity: 0.75,
+            opacity: 0.7,
             lineJoin: "round"
           }}
         />
