@@ -7,12 +7,10 @@ import dynamic from "next/dynamic";
 const MapWrapper = dynamic(() => import("./MapWrapper"), { 
   ssr: false, 
   loading: () => (
-    <div className="h-[50vh] sm:h-[60vh] md:h-[70vh] lg:h-[600px] bg-gradient-to-br from-gray-100 to-gray-300 flex items-center justify-center rounded-3xl shadow-2xl">
-      <div className="text-center animate-pulse">
-        <div className="w-16 h-16 sm:w-20 sm:h-20 md:w-24 md:h-24 bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl mx-auto mb-4 shadow-xl"></div>
-        <div className="text-xl sm:text-2xl md:text-3xl font-bold bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
-          GPS-трек
-        </div>
+    <div className="h-[550px] bg-[#121824] flex items-center justify-center rounded-2xl border border-slate-800 shadow-2xl">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+        <div className="text-sm font-medium text-slate-400 tracking-wide">Инициализация карты...</div>
       </div>
     </div>
   ) 
@@ -24,82 +22,117 @@ interface Props {
 
 export default function AudioGeoMap({ initialPoints }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const playPromiseRef = useRef<Promise<void> | null>(null);
+
+  const [loadMode, setLoadMode] = useState<"real" | "100k" | "1m">("real");
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [position, setPosition] = useState<[number, number]>([55.7558, 37.6176]);
   const [volume, setVolume] = useState(1);
-  const [isDragging, setIsDragging] = useState(false);
+  const [position, setPosition] = useState<[number, number]>([55.7558, 37.6176]);
+
+  const DEFAULT_AUDIO_PATH = "/audio/test_30min.wav";
+
+  const activePoints = useMemo(() => {
+    if (loadMode === "real") return initialPoints;
+
+    const count = loadMode === "100k" ? 100000 : 1000000;
+    const generated: GeoPoint[] = [];
+    const maxTime = duration > 0 ? duration : 600;
+    
+    let lat = 55.7558;
+    let lng = 37.6176;
+
+    for (let i = 0; i < count; i++) {
+      const progress = i / (count - 1);
+      const angle = progress * 50 * Math.PI; 
+      const radius = 0.02 * progress; 
+      
+      generated.push({
+        time: progress * maxTime,
+        lat: lat + Math.sin(angle) * radius,
+        lng: lng + Math.cos(angle) * radius
+      });
+    }
+    return generated;
+  }, [loadMode, initialPoints, duration]);
 
   const getInterpolatedPosition = useCallback((time: number): [number, number] => {
-    if (initialPoints.length === 0) return [55.7558, 37.6176];
-
-    if (time >= initialPoints[initialPoints.length - 1].time) {
-      const lastPoint = initialPoints[initialPoints.length - 1];
-      return [lastPoint.lat, lastPoint.lng];
+    if (activePoints.length === 0) return [55.7558, 37.6176];
+    if (time <= activePoints[0].time) return [activePoints[0].lat, activePoints[0].lng];
+    if (time >= activePoints[activePoints.length - 1].time) {
+      return [activePoints[activePoints.length - 1].lat, activePoints[activePoints.length - 1].lng];
     }
 
-    if (time <= initialPoints[0].time) return [initialPoints[0].lat, initialPoints[0].lng];
-    
-    for (let i = 0; i < initialPoints.length - 1; i++) {
-      const current = initialPoints[i];
-      const next = initialPoints[i + 1];
-      
-      if (time >= current.time && time < next.time) {
-        const progress = (time - current.time) / (next.time - current.time);
-        const smoothProgress = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-        
-        const lat = current.lat + (next.lat - current.lat) * smoothProgress;
-        const lng = current.lng + (next.lng - current.lng) * smoothProgress;
-        return [lat, lng];
+    let low = 0;
+    let high = activePoints.length - 2;
+    let index = 0;
+
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      if (time >= activePoints[mid].time && time < activePoints[mid + 1].time) {
+        index = mid;
+        break;
+      } else if (time < activePoints[mid].time) {
+        high = mid - 1;
+      } else {
+        low = mid + 1;
       }
     }
-    return position;
-  }, [initialPoints, position]);
+
+    const current = activePoints[index];
+    const next = activePoints[index + 1];
+    
+    const progress = (time - current.time) / (next.time - current.time);
+    const smoothProgress = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+    
+    return [
+      current.lat + (next.lat - current.lat) * smoothProgress,
+      current.lng + (next.lng - current.lng) * smoothProgress
+    ];
+  }, [activePoints]);
 
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || isDragging) return;
+    if (!audio) return;
 
-    const updateTime = () => {
+    const updateTick = () => {
       const newTime = audio.currentTime;
       setCurrentTime(newTime);
-      const newPos = getInterpolatedPosition(newTime);
-      setPosition(newPos);
+      setPosition(getInterpolatedPosition(newTime));
     };
 
-    const handleTimeUpdate = () => {
-      if (Math.abs(audio.currentTime - currentTime) > 0.1) {
-        requestAnimationFrame(updateTime);
-      }
-    };
-
-    audio.addEventListener("timeupdate", handleTimeUpdate);
-    audio.addEventListener("loadedmetadata", () => {
+    const handleMetadata = () => {
       setDuration(audio.duration || 0);
-      setPosition(getInterpolatedPosition(0));
-    });
-    audio.addEventListener("ended", () => {
+      setPosition(getInterpolatedPosition(audio.currentTime));
+    };
+    
+    const handleEnded = () => {
       setIsPlaying(false);
       setCurrentTime(0);
-    });
+      audio.currentTime = 0;
+    };
+
+    audio.addEventListener("timeupdate", updateTick);
+    audio.addEventListener("loadedmetadata", handleMetadata);
+    audio.addEventListener("ended", handleEnded);
     audio.addEventListener("pause", () => setIsPlaying(false));
     audio.addEventListener("play", () => setIsPlaying(true));
 
+    if (audio.readyState >= 1) handleMetadata();
+
     return () => {
-      audio.removeEventListener("timeupdate", handleTimeUpdate);
-      audio.removeEventListener("loadedmetadata", () => {});
-      audio.removeEventListener("ended", () => {});
+      audio.removeEventListener("timeupdate", updateTick);
+      audio.removeEventListener("loadedmetadata", handleMetadata);
+      audio.removeEventListener("ended", handleEnded);
     };
-  }, [getInterpolatedPosition, currentTime, isDragging]);
+  }, [getInterpolatedPosition]);
 
   const handleProgressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newTime = parseFloat(e.target.value);
     setCurrentTime(newTime);
-    if (audioRef.current) {
-      audioRef.current.currentTime = newTime;
-      setPosition(getInterpolatedPosition(newTime));
-    }
+    if (audioRef.current) audioRef.current.currentTime = newTime;
+    setPosition(getInterpolatedPosition(newTime));
   };
 
   const togglePlay = () => {
@@ -107,175 +140,146 @@ export default function AudioGeoMap({ initialPoints }: Props) {
     if (!audio) return;
     
     if (isPlaying) {
-      audio.pause();
+      if (playPromiseRef.current) {
+        playPromiseRef.current.then(() => audio.pause()).catch(() => audio.pause());
+      } else {
+        audio.pause();
+      }
     } else {
-      audio.play().catch(console.error);
+      playPromiseRef.current = audio.play();
+      playPromiseRef.current
+        .then(() => { playPromiseRef.current = null; })
+        .catch((err) => {
+          playPromiseRef.current = null;
+          if (err.name !== "AbortError") console.error(err);
+        });
     }
   };
 
   const totalDistance = useMemo(() => {
     let distance = 0;
-    for (let i = 0; i < initialPoints.length - 1; i++) {
-      const lat1 = initialPoints[i].lat * Math.PI / 180;
-      const lng1 = initialPoints[i].lng * Math.PI / 180;
-      const lat2 = initialPoints[i + 1].lat * Math.PI / 180;
-      const lng2 = initialPoints[i + 1].lng * Math.PI / 180;
-      
-      const dLat = lat2 - lat1;
-      const dLng = lng2 - lng1;
-      const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng/2) * Math.sin(dLng/2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      distance += 6371 * c;
+    const R = 6371;
+    const step = loadMode === "real" ? 1 : 100; 
+    
+    for (let i = 0; i < activePoints.length - step; i += step) {
+      const lat1 = activePoints[i].lat * Math.PI / 180;
+      const lng1 = activePoints[i].lng * Math.PI / 180;
+      const lat2 = activePoints[i + step].lat * Math.PI / 180;
+      const lng2 = activePoints[i + step].lng * Math.PI / 180;
+      const c = 2 * Math.atan2(
+        Math.sqrt(Math.sin((lat2 - lat1)/2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin((lng2 - lng1)/2) ** 2),
+        Math.sqrt(1 - (Math.sin((lat2 - lat1)/2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin((lng2 - lng1)/2) ** 2))
+      );
+      distance += R * c;
     }
     return distance;
-  }, [initialPoints]);
+  }, [activePoints, loadMode]);
 
-  const currentDistance = useMemo(() => {
-    if (!initialPoints.length || currentTime <= 0) return 0;
-
-    let targetIndex = 0;
-    for (let i = 0; i < initialPoints.length; i++) {
-      if (initialPoints[i].time <= currentTime) {
-        targetIndex = i;
-      } else {
-        break;
-      }
-    }
-
-    let distance = 0;
-    for (let i = 1; i <= targetIndex; i++) {
-      const lat1 = initialPoints[i-1].lat * Math.PI / 180;
-      const lng1 = initialPoints[i-1].lng * Math.PI / 180;
-      const lat2 = initialPoints[i].lat * Math.PI / 180;
-      const lng2 = initialPoints[i].lng * Math.PI / 180;
-      
-      const dLat = lat2 - lat1;
-      const dLng = lng2 - lng1;
-      const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng/2) * Math.sin(dLng/2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      distance += 6371 * c;
-    }
-
-    if (targetIndex < initialPoints.length - 1) {
-      const current = initialPoints[targetIndex];
-      const next = initialPoints[targetIndex + 1];
-      if (currentTime >= current.time && currentTime <= next.time) {
-        const progress = (currentTime - current.time) / (next.time - current.time);
-        const lat1 = current.lat * Math.PI / 180;
-        const lng1 = current.lng * Math.PI / 180;
-        const lat2 = next.lat * Math.PI / 180;
-        const lng2 = next.lng * Math.PI / 180;
-        
-        const dLat = lat2 - lat1;
-        const dLng = lng2 - lng1;
-        const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng/2) * Math.sin(dLng/2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        distance += (6371 * c) * progress;
-      }
-    }
-
-    return distance;
-  }, [initialPoints, currentTime]);
+  const progressPercentage = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 py-4 sm:py-6 lg:py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-7xl mx-auto">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6 mb-6 sm:mb-8 lg:mb-12 auto-rows-fr">
-          <div className="bg-white/90 backdrop-blur-xl rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-8 shadow-xl sm:shadow-2xl border border-white/50 col-span-1 sm:col-span-2 lg:col-span-1">
-            <div className="text-2xl sm:text-3xl lg:text-4xl xl:text-5xl font-black bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent leading-tight">
-              {initialPoints.length}
-            </div>
-            <div className="text-xs sm:text-sm lg:text-base font-semibold text-gray-600 mt-1 sm:mt-2">GPS точек</div>
+    <div className="min-h-screen bg-[#0A0E17] font-sans text-slate-100 antialiased selection:bg-indigo-500/30 selection:text-indigo-200 py-16 px-6 sm:px-12">
+      <div className="max-w-6xl mx-auto space-y-8">
+        
+        <div className="flex flex-col md:flex-row md:items-center justify-between p-6 bg-[#111724]/60 rounded-2xl border border-slate-800/80 backdrop-blur-xl gap-6">
+          <div>
+            <h1 className="text-lg font-semibold tracking-tight text-slate-200">Режим гео-прореживания</h1>
+            <p className="text-xs text-slate-400 mt-1">Оптимизация рендеринга экстремальных массивов векторов</p>
           </div>
-          <div className="bg-white/90 backdrop-blur-xl rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-8 shadow-xl sm:shadow-2xl border border-white/50 col-span-1 sm:col-span-2 lg:col-span-1">
-            <div className="text-2xl sm:text-3xl lg:text-4xl xl:text-5xl font-black text-emerald-600">{totalDistance.toFixed(1)} км</div>
-            <div className="text-xs sm:text-sm lg:text-base font-semibold text-gray-600 mt-1 sm:mt-2">Общий путь</div>
-          </div>
-          <div className="bg-white/90 backdrop-blur-xl rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-8 shadow-xl sm:shadow-2xl border border-white/50 col-span-1 sm:col-span-2 lg:col-span-1">
-            <div className="text-2xl sm:text-3xl lg:text-4xl xl:text-5xl font-black text-orange-600">{currentDistance.toFixed(1)} км</div>
-            <div className="text-xs sm:text-sm lg:text-base font-semibold text-gray-600 mt-1 sm:mt-2">Пройдено</div>
+          <div className="flex flex-wrap gap-2.5 p-1 bg-[#1A2333]/60 border border-slate-800 rounded-xl">
+            {(["real", "100k", "1m"] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setLoadMode(mode)}
+                className={`px-4 py-2 rounded-lg text-xs font-medium tracking-wide transition-all duration-200 ${
+                  loadMode === mode
+                    ? "bg-slate-800 text-indigo-400 border border-slate-700/50 shadow-md shadow-black/20"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {mode === "real" && "Реальный трек"}
+                {mode === "100k" && "100K точек"}
+                {mode === "1m" && "1M точек"}
+              </button>
+            ))}
           </div>
         </div>
 
-        <div className="bg-white/95 backdrop-blur-3xl sm:backdrop-blur-xl rounded-3xl shadow-2xl border border-white/70 p-4 sm:p-6 lg:p-8 mb-6 sm:mb-8 lg:mb-12">
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 sm:gap-6">
-            <label className="group flex-1 sm:flex-none relative">
-              <input
-                type="file"
-                accept="audio/wav,audio/wave,audio/mp3"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file && audioRef.current) {
-                    audioRef.current.src = URL.createObjectURL(file);
-                    setCurrentTime(0);
-                    setIsPlaying(false);
-                    setPosition([initialPoints[0]?.lat || 55.7558, initialPoints[0]?.lng || 37.6176]);
-                  }
-                }}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 peer"
-              />
-              <div className="px-6 py-4 sm:px-8 sm:py-4 bg-gradient-to-r from-gray-100 to-gray-200 hover:from-gray-200 hover:to-gray-300 rounded-2xl font-semibold text-gray-700 shadow-lg border-2 border-dashed border-gray-300 transition-all duration-300 hover:shadow-xl hover:scale-[1.02] cursor-pointer text-center text-sm sm:text-base">
-                📁 Загрузить WAV
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+          <div className="bg-[#111724]/40 border border-slate-800/60 rounded-2xl p-6 transition-all duration-300 hover:border-slate-800">
+            <div className="text-xs font-medium uppercase tracking-widest text-slate-500">Точки телеметрии</div>
+            <div className="text-2xl font-semibold tracking-tight text-indigo-400 mt-2">{activePoints.length.toLocaleString()}</div>
+          </div>
+          <div className="bg-[#111724]/40 border border-slate-800/60 rounded-2xl p-6 transition-all duration-300 hover:border-slate-800">
+            <div className="text-xs font-medium uppercase tracking-widest text-slate-500">Протяженность</div>
+            <div className="text-2xl font-semibold tracking-tight text-emerald-400 mt-2">{totalDistance.toFixed(2)} км</div>
+          </div>
+          <div className="bg-[#111724]/40 border border-slate-800/60 rounded-2xl p-6 transition-all duration-300 hover:border-slate-800">
+            <div className="text-xs font-medium uppercase tracking-widest text-slate-500">Ядро оптимизации</div>
+            <div className="text-2xl font-semibold tracking-tight text-slate-300 mt-2">
+              {loadMode === "real" ? "Прямой поток" : "Downsampling"}
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-[#111724]/60 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-xl flex flex-col sm:flex-row items-center gap-6">
+          <button
+            onClick={togglePlay}
+            className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-sm transition-all duration-300 border ${
+              isPlaying
+                ? "bg-transparent border-red-500/30 text-red-400 hover:bg-red-500/10 shadow-lg shadow-red-500/5"
+                : "bg-indigo-600 border-indigo-500 text-white hover:bg-indigo-500 hover:border-indigo-400 shadow-lg shadow-indigo-600/20"
+            }`}
+          >
+            {isPlaying ? "⏸" : "▶"}
+          </button>
+
+          <div className="flex-1 w-full group">
+            <div className="relative w-full flex items-center h-2">
+              <div className="absolute left-0 right-0 top-0 bottom-0 bg-slate-800 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-100 ease-out"
+                  style={{ width: `${progressPercentage}%` }}
+                />
               </div>
-            </label>
-
-            <button
-              onClick={togglePlay}
-              className={`relative p-4 sm:p-6 lg:p-7 rounded-2xl font-bold text-lg sm:text-xl shadow-2xl transition-all duration-300 hover:scale-105 active:scale-95 flex-shrink-0 min-w-[120px] sm:min-w-[160px] ${
-                isPlaying
-                  ? "bg-gradient-to-r from-red-500 via-red-600 to-red-700 text-white shadow-red-500/50"
-                  : "bg-gradient-to-r from-emerald-500 via-emerald-600 to-emerald-700 text-white shadow-emerald-500/50"
-              }`}
-            >
-              <span className="relative z-10">{isPlaying ? "⏸️" : "▶️"}</span>
-              <div className={`absolute inset-0 rounded-2xl blur opacity-50 ${
-                isPlaying ? 'bg-gradient-to-r from-red-400 to-red-600' : 'bg-gradient-to-r from-emerald-400 to-emerald-600'
-              }`}></div>
-            </button>
-
-            <div className="flex-1 min-w-0">
               <input
                 type="range"
                 min="0"
                 max={duration || 1}
                 value={currentTime}
-                step="0.1"
+                step="0.01"
                 onChange={handleProgressChange}
-                onMouseDown={() => setIsDragging(true)}
-                onMouseUp={() => setIsDragging(false)}
-                onTouchStart={() => setIsDragging(true)}
-                onTouchEnd={() => setIsDragging(false)}
-                className="w-full h-3 bg-gray-200 rounded-2xl appearance-none cursor-pointer accent-blue-500 hover:accent-blue-600 transition-all shadow-inner hover:shadow-lg"
+                className="absolute left-0 right-0 w-full h-2 opacity-0 cursor-pointer z-10"
               />
-              <div className="flex justify-between text-xs sm:text-sm font-mono text-gray-500 mt-2">
-                <span>{currentTime.toFixed(1)}s</span>
-                <span>{duration.toFixed(1)}s</span>
-              </div>
             </div>
+            <div className="flex justify-between text-[11px] font-mono tracking-wider text-slate-500 mt-2.5">
+              <span>{Math.floor(currentTime / 60)}:{(currentTime % 60).toFixed(0).padStart(2, "0")}</span>
+              <span>{Math.floor(duration / 60)}:{(duration % 60).toFixed(0).padStart(2, "0")}</span>
+            </div>
+          </div>
 
-            <div className="flex items-center gap-2 bg-gray-100 px-3 sm:px-4 py-2 sm:py-3 rounded-2xl flex-shrink-0">
-              <div className="w-4 h-4 sm:w-5 sm:h-5 text-gray-500">🔊</div>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
-                value={volume}
-                onChange={(e) => {
-                  if (audioRef.current) audioRef.current.volume = parseFloat(e.target.value);
-                  setVolume(parseFloat(e.target.value));
-                }}
-                className="w-16 sm:w-20 h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500 flex-shrink-0"
-              />
-              <span className="text-xs font-mono text-gray-600 whitespace-nowrap">{Math.round(volume * 100)}%</span>
-            </div>
+          <div className="flex items-center gap-3 bg-[#1A2333]/40 border border-slate-800/80 px-4 py-2.5 rounded-xl group">
+            <span className="text-xs text-slate-500 group-hover:text-slate-400 transition-colors">Vol</span>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value={volume}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (audioRef.current) audioRef.current.volume = v;
+                setVolume(v);
+              }}
+              className="w-16 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+            />
           </div>
         </div>
 
-        <MapWrapper position={position} points={initialPoints} />
+        <MapWrapper position={position} points={activePoints} />
       </div>
 
-      <audio ref={audioRef} preload="metadata" />
+      <audio ref={audioRef} src={DEFAULT_AUDIO_PATH} preload="metadata" />
     </div>
   );
 }

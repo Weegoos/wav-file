@@ -1,11 +1,10 @@
 "use client";
 
-import React, { useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useRef, useMemo } from "react";
 import { MapContainer, TileLayer, Polyline } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import "leaflet-defaulticon-compatibility";
-import "leaflet-defaulticon-compatibility/dist/leaflet-defaulticon-compatibility.css";
+
 import { GeoPoint } from "./types";
 
 interface Props {
@@ -13,104 +12,101 @@ interface Props {
   points: GeoPoint[];
 }
 
+function downsamplePoints(points: GeoPoint[], sampleRate: number): [number, number][] {
+  const result: [number, number][] = [];
+  const len = points.length;
+  for (let i = 0; i < len; i += sampleRate) {
+    result.push([points[i].lat, points[i].lng]);
+  }
+  if ((len - 1) % sampleRate !== 0) {
+    result.push([points[len - 1].lat, points[len - 1].lng]);
+  }
+  return result;
+}
+
 export default function MapWrapper({ position, points }: Props) {
   const mapRef = useRef<L.Map>(null);
-  const markerRef = useRef<L.CircleMarker>(null);
-  const trailRef = useRef<L.Polyline>(null);
-  const pulseRef = useRef<number | null>(null);
+  const markerRef = useRef<L.Marker>(null);
 
-  const updateMarker = useCallback(() => {
+  const routePositions = useMemo(() => {
+    if (points.length > 500000) {
+      return downsamplePoints(points, 50);
+    } else if (points.length > 10000) {
+      return downsamplePoints(points, 5);
+    }
+    return points.map(p => [p.lat, p.lng] as [number, number]);
+  }, [points]);
+
+  const cssPulseIcon = useMemo(() => {
+    return L.divIcon({
+      className: "leaflet-gpu-marker",
+      html: `
+        <div style="
+          position: relative;
+          width: 12px;
+          height: 12px;
+          background-color: #6366f1;
+          border: 2px solid #ffffff;
+          border-radius: 50%;
+          box-shadow: 0 0 12px rgba(99,102,241,0.6);
+        ">
+          <div style="
+            position: absolute;
+            top: -2px; left: -2px;
+            width: 12px; height: 12px;
+            background-color: #6366f1;
+            border-radius: 50%;
+            z-index: -1;
+            animation: pointPulse 1.6s infinite cubic-bezier(0.16, 1, 0.3, 1);
+          "></div>
+        </div>
+        <style>
+          @keyframes pointPulse {
+            0% { transform: scale(1); opacity: 0.6; }
+            100% { transform: scale(3.5); opacity: 0; }
+          }
+        </style>
+      `,
+      iconSize: [12, 12],
+      iconAnchor: [6, 6]
+    });
+  }, []);
+
+  useEffect(() => {
     if (!mapRef.current) return;
-
     const map = mapRef.current;
-    const renderer = L.canvas({ padding: 0.5, tolerance: 10 });
 
     if (!markerRef.current) {
-      markerRef.current = L.circleMarker(position, {
-        renderer,
-        radius: 12,
-        fillColor: "#10b981",
-        color: "#059669",
-        weight: 3,
-        opacity: 1,
-        fillOpacity: 0.95,
-        bubblingMouseEvents: false
-      }).addTo(map);
+      markerRef.current = L.marker(position, { icon: cssPulseIcon }).addTo(map);
     } else {
       markerRef.current.setLatLng(position);
     }
 
-    if (trailRef.current) {
-      trailRef.current.setLatLngs([position]);
-    } else {
-      trailRef.current = L.polyline([position], {
-        renderer,
-        color: "#f59e0b",
-        weight: 6,
-        opacity: 0.9,
-        dashArray: "12, 8"
-      }).addTo(map);
-    }
+    map.panTo(position, { animate: true, duration: 0.15 });
+  }, [position, cssPulseIcon]);
 
-    const pulse = () => {
-      if (markerRef.current) {
-        const currentRadius = markerRef.current.getRadius();
-        markerRef.current.setRadius(currentRadius > 12 ? 16 : 12);
-        markerRef.current.setStyle({
-          fillColor: currentRadius > 12 ? "#34d399" : "#10b981"
-        });
-      }
-    };
-
-    if (pulseRef.current) clearInterval(pulseRef.current);
-    pulseRef.current = setInterval(pulse, 350) as unknown as number;
-
-    map.flyTo(position, 17, { duration: 0.6, animate: true });
-  }, [position]);
-
-  useEffect(() => {
-    updateMarker();
-    return () => {
-      if (pulseRef.current) clearInterval(pulseRef.current);
-    };
-  }, [updateMarker]);
-
-  const routePositions = React.useMemo(() => 
-    points.map(p => [p.lat, p.lng] as [number, number]), 
-    [points]
-  );
-
-  if (!points.length) {
-    return (
-      <div className="w-full h-[50vh] sm:h-[60vh] lg:h-[70vh] bg-gradient-to-br from-orange-50 to-red-50 rounded-3xl shadow-2xl flex items-center justify-center border-4 border-dashed border-orange-200">
-        <div className="text-center animate-bounce">
-          <div className="w-20 h-20 bg-gradient-to-r from-orange-400 to-red-500 rounded-2xl mx-auto mb-6 shadow-xl"></div>
-          <div className="text-2xl font-black bg-gradient-to-r from-orange-600 to-red-600 bg-clip-text text-transparent">
-            GPS точки
-          </div>
-        </div>
-      </div>
-    );
-  }
+  if (!points.length) return null;
 
   return (
-    <div className="w-full h-[50vh] sm:h-[60vh] lg:h-[70vh] rounded-3xl overflow-hidden shadow-2xl border-4 border-white/50 bg-white/70 backdrop-blur-xl">
+    <div className="w-full h-[550px] rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-[#0C101A]">
       <MapContainer
         center={position}
-        zoom={16}
+        zoom={14}
         style={{ height: "100%", width: "100%" }}
         ref={mapRef}
         preferCanvas={true}
       >
-        <TileLayer
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        <TileLayer 
+          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" 
+          attribution='&copy; <a href="https://carto.com/">CARTO</a>'
         />
         <Polyline
           positions={routePositions}
           pathOptions={{
-            color: "#3b82f6",
-            weight: 6,
-            opacity: 0.95
+            color: "#6366f1",
+            weight: 3.5,
+            opacity: 0.75,
+            lineJoin: "round"
           }}
         />
       </MapContainer>
