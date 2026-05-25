@@ -7,10 +7,10 @@ import dynamic from "next/dynamic";
 const MapWrapper = dynamic(() => import("./MapWrapper"), { 
   ssr: false, 
   loading: () => (
-    <div className="h-[550px] bg-[#121824] flex items-center justify-center rounded-2xl border border-slate-800 shadow-2xl">
+    <div className="h-[45vh] sm:h-[550px] bg-[#121824] flex items-center justify-center rounded-2xl border border-slate-800 shadow-2xl">
       <div className="flex flex-col items-center gap-3">
-        <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-        <div className="text-sm font-medium text-slate-400 tracking-wide">Инициализация карты...</div>
+        <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+        <div className="text-xs font-medium text-slate-400 tracking-wide">Инициализация карты...</div>
       </div>
     </div>
   ) 
@@ -33,29 +33,47 @@ export default function AudioGeoMap({ initialPoints }: Props) {
 
   const DEFAULT_AUDIO_PATH = "/audio/test_30min.wav";
 
-  const activePoints = useMemo(() => {
-    if (loadMode === "real") return initialPoints;
+// Генерируем мега-путь реалистично
+const activePoints = useMemo(() => {
+  if (loadMode === "real") return initialPoints;
 
-    const count = loadMode === "100k" ? 100000 : 1000000;
-    const generated: GeoPoint[] = [];
-    const maxTime = duration > 0 ? duration : 600;
-    
-    let lat = 55.7558;
-    let lng = 37.6176;
+  const count = loadMode === "100k" ? 100000 : 1000000;
+  const generated: GeoPoint[] = [];
+  const maxTime = duration > 0 ? duration : 600;
+  
+  // Москва, центр
+  let latBase = 55.7558;
+  let lngBase = 37.6176;
 
+  if (loadMode === "100k") {
+    // Сложная спираль вокруг центра (путь ~140 км)
     for (let i = 0; i < count; i++) {
       const progress = i / (count - 1);
-      const angle = progress * 50 * Math.PI; 
+      const angle = progress * 70 * Math.PI; 
       const radius = 0.02 * progress; 
-      
       generated.push({
         time: progress * maxTime,
-        lat: lat + Math.sin(angle) * radius,
-        lng: lng + Math.cos(angle) * radius
+        lat: latBase + Math.sin(angle) * radius,
+        lng: lngBase + Math.cos(angle) * radius
       });
     }
-    return generated;
-  }, [loadMode, initialPoints, duration]);
+  } else {
+    // 1M точек: ОГРОМНАЯ мега-спираль по всей области (путь > 1000 км)
+    for (let i = 0; i < count; i++) {
+      const progress = i / (count - 1);
+      // Делаем спираль гораздо "шире" и с большим количеством витков
+      const angle = progress * 200 * Math.PI; 
+      const radius = 1.8 * progress; 
+      // Плотность точек запредельная, каждый микро-шаг витка забит точками
+      generated.push({
+        time: progress * maxTime,
+        lat: latBase + Math.sin(angle) * radius,
+        lng: lngBase + Math.cos(angle) * radius
+      });
+    }
+  }
+  return generated;
+}, [loadMode, initialPoints, duration]);
 
   const getInterpolatedPosition = useCallback((time: number): [number, number] => {
     if (activePoints.length === 0) return [55.7558, 37.6176];
@@ -178,63 +196,61 @@ export default function AudioGeoMap({ initialPoints }: Props) {
   const progressPercentage = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
-    <div className="min-h-screen bg-[#0A0E17] font-sans text-slate-100 antialiased selection:bg-indigo-500/30 selection:text-indigo-200 py-16 px-6 sm:px-12">
-      <div className="max-w-6xl mx-auto space-y-8">
+    <div className="min-h-screen bg-[#0A0E17] font-sans text-slate-100 antialiased selection:bg-indigo-500/30 selection:text-indigo-200 py-6 px-4 sm:py-16 sm:px-12">
+      <div className="max-w-6xl mx-auto space-y-4 sm:space-y-8">
         
-        <div className="flex flex-col md:flex-row md:items-center justify-between p-6 bg-[#111724]/60 rounded-2xl border border-slate-800/80 backdrop-blur-xl gap-6">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between p-4 sm:p-6 bg-[#111724]/60 rounded-2xl border border-slate-800/80 backdrop-blur-xl gap-4">
           <div>
-            <h1 className="text-lg font-semibold tracking-tight text-slate-200">Режим гео-прореживания</h1>
-            <p className="text-xs text-slate-400 mt-1">Оптимизация рендеринга экстремальных массивов векторов</p>
+            <h1 className="text-base sm:text-lg font-semibold tracking-tight text-slate-200">Режим гео-прореживания</h1>
+            <p className="text-xs text-slate-400 mt-0.5">Оптимизация рендеринга экстремальных массивов векторов</p>
           </div>
-          <div className="flex flex-wrap gap-2.5 p-1 bg-[#1A2333]/60 border border-slate-800 rounded-xl">
+          <div className="grid grid-cols-3 sm:flex gap-1.5 p-1 bg-[#1A2333]/60 border border-slate-800 rounded-xl w-full lg:w-auto">
             {(["real", "100k", "1m"] as const).map((mode) => (
               <button
                 key={mode}
                 onClick={() => setLoadMode(mode)}
-                className={`px-4 py-2 rounded-lg text-xs font-medium tracking-wide transition-all duration-200 ${
+                className={`px-2 py-2 sm:px-4 sm:py-2 rounded-lg text-[11px] sm:text-xs font-medium tracking-wide transition-all duration-200 text-center ${
                   loadMode === mode
                     ? "bg-slate-800 text-indigo-400 border border-slate-700/50 shadow-md shadow-black/20"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
-                {mode === "real" && "Реальный трек"}
-                {mode === "100k" && "100K точек"}
-                {mode === "1m" && "1M точек"}
+                {mode === "real" && "Реальный"}
+                {mode === "100k" && "100K т."}
+                {mode === "1m" && "1M т."}
               </button>
             ))}
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-          <div className="bg-[#111724]/40 border border-slate-800/60 rounded-2xl p-6 transition-all duration-300 hover:border-slate-800">
-            <div className="text-xs font-medium uppercase tracking-widest text-slate-500">Точки телеметрии</div>
-            <div className="text-2xl font-semibold tracking-tight text-indigo-400 mt-2">{activePoints.length.toLocaleString()}</div>
+        <div className="grid grid-cols-3 gap-3 sm:gap-5">
+          <div className="bg-[#111724]/40 border border-slate-800/60 rounded-2xl p-3 sm:p-6">
+            <div className="text-[10px] sm:text-xs font-medium uppercase tracking-widest text-slate-500 truncate">Точки</div>
+            <div className="text-base sm:text-2xl font-semibold tracking-tight text-indigo-400 mt-1 truncate">
+              {activePoints.length > 999999 ? "1.0M" : activePoints.length.toLocaleString()}
+            </div>
           </div>
-          <div className="bg-[#111724]/40 border border-slate-800/60 rounded-2xl p-6 transition-all duration-300 hover:border-slate-800">
-            <div className="text-xs font-medium uppercase tracking-widest text-slate-500">Протяженность</div>
-            <div className="text-2xl font-semibold tracking-tight text-emerald-400 mt-2">{totalDistance.toFixed(2)} км</div>
+          <div className="bg-[#111724]/40 border border-slate-800/60 rounded-2xl p-3 sm:p-6">
+            <div className="text-[10px] sm:text-xs font-medium uppercase tracking-widest text-slate-500 truncate">Путь</div>
+            <div className="text-base sm:text-2xl font-semibold tracking-tight text-emerald-400 mt-1 truncate">{totalDistance.toFixed(1)} км</div>
           </div>
-          <div className="bg-[#111724]/40 border border-slate-800/60 rounded-2xl p-6 transition-all duration-300 hover:border-slate-800">
-            <div className="text-xs font-medium uppercase tracking-widest text-slate-500">Ядро оптимизации</div>
-            <div className="text-2xl font-semibold tracking-tight text-slate-300 mt-2">
-              {loadMode === "real" ? "Прямой поток" : "Downsampling"}
+          <div className="bg-[#111724]/40 border border-slate-800/60 rounded-2xl p-3 sm:p-6">
+            <div className="text-[10px] sm:text-xs font-medium uppercase tracking-widest text-slate-500 truncate">Оптимизация</div>
+            <div className="text-base sm:text-2xl font-semibold tracking-tight text-slate-300 mt-1 truncate">
+              {loadMode === "real" ? "OFF" : "DSPD"}
             </div>
           </div>
         </div>
 
-        <div className="bg-[#111724]/60 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-xl flex flex-col sm:flex-row items-center gap-6">
+        <div className="bg-[#111724]/60 border border-slate-800/80 rounded-2xl p-4 sm:p-6 backdrop-blur-xl flex flex-row items-center gap-4 sm:gap-6">
           <button
             onClick={togglePlay}
-            className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-sm transition-all duration-300 border ${
-              isPlaying
-                ? "bg-transparent border-red-500/30 text-red-400 hover:bg-red-500/10 shadow-lg shadow-red-500/5"
-                : "bg-indigo-600 border-indigo-500 text-white hover:bg-indigo-500 hover:border-indigo-400 shadow-lg shadow-indigo-600/20"
-            }`}
+            className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center text-xs sm:text-sm transition-all duration-300 border flex-shrink-0 bg-indigo-600 border-indigo-500 text-white hover:bg-indigo-500 hover:border-indigo-400 shadow-lg shadow-indigo-600/20"
           >
             {isPlaying ? "⏸" : "▶"}
           </button>
 
-          <div className="flex-1 w-full group">
+          <div className="flex-1 min-w-0 group">
             <div className="relative w-full flex items-center h-2">
               <div className="absolute left-0 right-0 top-0 bottom-0 bg-slate-800 rounded-full overflow-hidden">
                 <div 
@@ -252,13 +268,13 @@ export default function AudioGeoMap({ initialPoints }: Props) {
                 className="absolute left-0 right-0 w-full h-2 opacity-0 cursor-pointer z-10"
               />
             </div>
-            <div className="flex justify-between text-[11px] font-mono tracking-wider text-slate-500 mt-2.5">
+            <div className="flex justify-between text-[10px] font-mono tracking-wider text-slate-500 mt-2">
               <span>{Math.floor(currentTime / 60)}:{(currentTime % 60).toFixed(0).padStart(2, "0")}</span>
               <span>{Math.floor(duration / 60)}:{(duration % 60).toFixed(0).padStart(2, "0")}</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 bg-[#1A2333]/40 border border-slate-800/80 px-4 py-2.5 rounded-xl group">
+          <div className="hidden sm:flex items-center gap-3 bg-[#1A2333]/40 border border-slate-800/80 px-4 py-2.5 rounded-xl group">
             <span className="text-xs text-slate-500 group-hover:text-slate-400 transition-colors">Vol</span>
             <input
               type="range"
